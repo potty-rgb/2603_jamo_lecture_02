@@ -2578,6 +2578,7 @@ function saveReport(dateKey, text, assignee) {
   else history.unshift({ date: dateKey, text, assignee: who });
   if (history.length > 14) history.length = 14;
   localStorage.setItem(key, JSON.stringify(history));
+  saveToCloud(key, JSON.stringify(history));
 }
 
 function buildReportHTML(assignee) {
@@ -3118,6 +3119,7 @@ function saveMoksilgamEntry(dateKey, text, assignee) {
   else history.unshift({ date: dateKey, text: text, assignee: who });
   if (history.length > 14) history.length = 14;
   localStorage.setItem(key, JSON.stringify(history));
+  saveToCloud(key, JSON.stringify(history));
 }
 
 function getMoksilgamPlainText() {
@@ -3527,6 +3529,7 @@ function saveDailySnapshot() {
   // 항상 오늘 스냅샷을 덮어씀 (마지막 업데이트가 기준이 됨)
   stored[todayKey] = getKpiSnapshot();
   localStorage.setItem('kpi_daily_snapshots', JSON.stringify(stored));
+  saveToCloud('kpi_daily_snapshots', JSON.stringify(stored));
 }
 function getYesterdaySnapshot() {
   // 오늘 이전 가장 최근 스냅샷을 반환 (정확히 어제가 아니어도 됨)
@@ -3586,11 +3589,82 @@ function updateImpactLog() {
   }).map(function(e){ return {title: e.title, channel: e.channel || '', assignee: e.assignee || ''}; });
   log.push({date: todayKey, kpiChanges: kpiChanges, activeTasks: activeTasks});
   localStorage.setItem('impact_log', JSON.stringify(log));
+  saveToCloud('impact_log', JSON.stringify(log));
 }
 
 // ===== SHEET UPDATE (마스터 시트 업데이트 via Apps Script 프록시) =====
 // Apps Script 웹앱 URL (배포 후 여기에 URL을 붙여넣으세요)
-var APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxRc69Emla6FmTp4vwRj7uahaJ7bAmvwiLbab_yyOcf6BY6H_dY0_MgjyM22XAxt6gn/exec';
+var APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzcH3Zq6YuULamSx0I2fJGf5xEtqDF7O3V3TmGD-a_UJ595f3deDNSaL4UKTWYIA_nn/exec';
+
+// ===== 클라우드 동기화 (Google Sheets _data 시트) =====
+var CLOUD_SYNC_KEYS = [
+  '책무회의_퍼티_history',
+  '책무회의_제나_history',
+  '목실감_퍼티_history',
+  '목실감_제나_history',
+  'kpi_daily_snapshots',
+  'impact_log',
+  'sheet_update_history'
+];
+
+// 페이지 로드 시 클라우드 데이터를 localStorage로 복원
+function loadFromCloud(callback) {
+  if (!APPS_SCRIPT_URL) { callback(); return; }
+  var cbName = '_cloudLoadCb_' + Date.now();
+  var timeout = setTimeout(function() {
+    delete window[cbName];
+    script.onerror = null;
+    callback();
+  }, 10000);
+
+  window[cbName] = function(data) {
+    clearTimeout(timeout);
+    delete window[cbName];
+    if (data && data.data) {
+      CLOUD_SYNC_KEYS.forEach(function(key) {
+        if (data.data[key] !== undefined && data.data[key] !== '') {
+          // 클라우드에 데이터가 있고, localStorage에 없거나 클라우드가 더 최신이면 복원
+          var local = localStorage.getItem(key);
+          if (!local || local === '{}' || local === '[]') {
+            localStorage.setItem(key, data.data[key]);
+          } else {
+            // 둘 다 있으면 길이가 더 큰 쪽 (더 많은 데이터) 사용
+            if (data.data[key].length > local.length) {
+              localStorage.setItem(key, data.data[key]);
+            }
+          }
+        }
+      });
+    }
+    callback();
+  };
+
+  var script = document.createElement('script');
+  script.src = APPS_SCRIPT_URL + '?action=loadData&callback=' + cbName;
+  script.onerror = function() {
+    clearTimeout(timeout);
+    delete window[cbName];
+    callback();
+  };
+  document.head.appendChild(script);
+}
+
+// 클라우드에 데이터 저장 (비동기, 실패해도 무시 — localStorage가 1차 저장소)
+function saveToCloud(key, value) {
+  if (!APPS_SCRIPT_URL) return;
+  if (CLOUD_SYNC_KEYS.indexOf(key) < 0) return;
+
+  try {
+    // Google Apps Script POST는 리디렉트를 사용하므로 no-cors 모드 필요
+    // no-cors 모드에서는 응답을 읽을 수 없지만 요청은 전달됨
+    fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ key: key, value: value })
+    }).catch(function() {});
+  } catch(e) {}
+}
 
 function updateFromSheet() {
   var btn = document.getElementById('btnSheetUpdate');
@@ -3839,6 +3913,7 @@ function saveSheetUpdateHistory(date, rowCount) {
   });
   if (history.length > 5) history = history.slice(0, 5);
   localStorage.setItem('sheet_update_history', JSON.stringify(history));
+  saveToCloud('sheet_update_history', JSON.stringify(history));
   renderSheetHistory();
 }
 function toggleSheetHistory(e) {
@@ -4580,7 +4655,7 @@ function renderCheerRolling() {
 })();
 setInterval(renderCheerRolling, 30000);
 
-// Init
+// Init — 즉시 초기화 실행 (클라우드 로딩은 백그라운드에서 비동기 처리)
 saveDailySnapshot();
 initFilters();
 renderKpi();
@@ -4595,6 +4670,13 @@ renderWeeklyPlan();
   if (wpArrow && wpArrow.classList.contains('expanded')) { wpArrow.classList.remove('expanded'); }
 })();
 render();
+
+// 클라우드에서 데이터 복원 (백그라운드, 복원 성공 시 관련 UI 갱신)
+loadFromCloud(function() {
+  // 클라우드 데이터가 localStorage에 복원된 후 UI 갱신
+  renderStatusSummary();
+  renderWeeklyPlan();
+});
 </script>
 </body>
 </html>

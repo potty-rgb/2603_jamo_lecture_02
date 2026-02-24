@@ -186,15 +186,16 @@ KPI 실적은 특정 행에서 읽어옵니다:
 
 ### 2-7. 데이터 저장 위치
 
-| 데이터 | 저장 위치 | 설명 |
-|--------|-----------|------|
-| 공약/일정 | 마스터 시트 (Google Sheets) | 시트 업데이트 시 동기화 |
-| 책무회의 기록 | 브라우저 localStorage | 브라우저별로 저장. 다른 브라우저에서는 보이지 않음 |
-| 목실감 기록 | 브라우저 localStorage | 동일 |
-| KPI 스냅샷 | 브라우저 localStorage | 전일 대비 비교에 사용 |
-| 임팩트 로그 | 브라우저 localStorage | 전일 대비 KPI 변화 기록 |
+| 데이터 | 1차 저장소 | 2차 저장소 (클라우드 백업) | 설명 |
+|--------|-----------|--------------------------|------|
+| 공약/일정 | 마스터 시트 (Google Sheets) | — | 시트 업데이트 시 동기화 |
+| 책무회의 기록 | 브라우저 localStorage | Google Sheets `_data` 탭 | 저장 시 자동 백업, 페이지 로드 시 자동 복원 |
+| 목실감 기록 | 브라우저 localStorage | Google Sheets `_data` 탭 | 동일 |
+| KPI 스냅샷 | 브라우저 localStorage | Google Sheets `_data` 탭 | 동일 |
+| 임팩트 로그 | 브라우저 localStorage | Google Sheets `_data` 탭 | 동일 |
+| 시트 업데이트 이력 | 브라우저 localStorage | Google Sheets `_data` 탭 | 동일 |
 
-> ⚠️ **주의**: 브라우저 캐시를 삭제하면 localStorage 데이터(책무회의, 목실감, KPI 스냅샷, 임팩트 로그)가 모두 삭제됩니다.
+> ✅ **클라우드 백업**: 책무회의, 목실감, KPI 스냅샷, 임팩트 로그 등은 Google Sheets의 `_data` 시트 탭에 자동으로 백업됩니다. 브라우저 캐시를 삭제하거나 다른 브라우저에서 접속해도 데이터가 자동 복원됩니다.
 
 ---
 
@@ -207,7 +208,10 @@ KPI 실적은 특정 행에서 읽어옵니다:
 → 임팩트는 **전일 스냅샷**과 비교합니다. 처음 사용 시에는 오늘 스냅샷만 저장되고, 내일부터 비교가 시작됩니다.
 
 **Q: 책무회의/목실감이 다른 컴퓨터에서 안 보여요**
-→ 이 데이터는 브라우저 localStorage에 저장됩니다. 중요한 내용은 **복사** 버튼으로 별도 보관해주세요.
+→ 클라우드 백업이 활성화되어 있으면 다른 브라우저에서도 자동 복원됩니다. 만약 복원되지 않는 경우, Apps Script가 정상 배포되어 있는지 확인해주세요.
+
+**Q: 브라우저 캐시를 삭제해도 데이터가 유지되나요?**
+→ 네. 모든 데이터는 Google Sheets `_data` 시트 탭에 자동 백업됩니다. 페이지를 다시 열면 클라우드에서 자동 복원됩니다.
 
 **Q: 필터를 여러 개 선택했는데 공약이 안 보여요**
 → 다른 그룹 간 필터는 AND 조건입니다. 예를 들어 `채널: CRM` + `담당: 제나`를 선택하면 CRM이면서 제나 담당인 공약만 표시됩니다.
@@ -387,10 +391,158 @@ var APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfyc.../exec';
 → 새 구글 시트의 Apps Script 웹앱 URL로 변경
 
 **Apps Script 배포 방법:**
-1. 새 구글 시트 → 확장 프로그램 → Apps Script
-2. 기존 프로젝트의 `apps_script_proxy.gs` 코드를 붙여넣기
-3. 배포 → 새 배포 → 웹앱 → 모든 사용자에게 액세스 허용
-4. 생성된 URL을 위 변수에 설정
+1. 새 구글 시트 → **확장 프로그램** → **Apps Script** 클릭
+2. 기존 코드를 모두 지우고, 아래 **Apps Script 전체 코드**를 붙여넣기
+3. `SHEET_GID` 값을 새 시트의 GID로 변경 (시트 URL의 `gid=` 뒤 숫자)
+4. 상단 **배포** → **새 배포** 클릭
+5. 유형: **웹 앱** 선택
+6. 실행 주체: **본인(나)** 선택
+7. 액세스 권한: **모든 사용자** 선택
+8. **배포** 클릭 → 생성된 웹앱 URL을 `APPS_SCRIPT_URL` 변수에 설정
+
+> ⚠️ 코드를 수정한 후에는 반드시 **배포** → **배포 관리** → **새 버전**으로 다시 배포해야 변경사항이 반영됩니다.
+
+<details>
+<summary><strong>📋 Apps Script 전체 코드 (클릭하여 펼치기)</strong></summary>
+
+```javascript
+var SHEET_GID = 370058510; // 시트 GID (URL의 gid= 뒤 숫자) ← 새 시트에 맞게 변경!
+var DATA_SHEET_NAME = '_data'; // 클라우드 저장용 시트 탭 이름
+
+// ===== GET 요청 처리 =====
+function doGet(e) {
+  var callback = (e && e.parameter) ? e.parameter.callback : null;
+  var action = (e && e.parameter) ? (e.parameter.action || 'sheet') : 'sheet';
+
+  try {
+    var result;
+
+    if (action === 'loadData') {
+      // 클라우드 저장 데이터 로드
+      result = loadCloudData();
+    } else {
+      // 기존: 마스터 시트 데이터 로드
+      result = loadSheetData();
+    }
+
+    return respond(result, callback);
+
+  } catch (err) {
+    return respond({ error: err.message }, callback);
+  }
+}
+
+// ===== POST 요청 처리 (클라우드 저장) =====
+function doPost(e) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(DATA_SHEET_NAME);
+    if (!sheet) {
+      sheet = ss.insertSheet(DATA_SHEET_NAME);
+    }
+
+    var payload = JSON.parse(e.postData.contents);
+    var key = payload.key;
+    var value = payload.value;
+
+    if (!key) {
+      return ContentService.createTextOutput(JSON.stringify({ error: 'key is required' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 기존 행에서 키 찾기
+    var data = sheet.getDataRange().getValues();
+    var found = false;
+    for (var i = 0; i < data.length; i++) {
+      if (String(data[i][0]) === key) {
+        sheet.getRange(i + 1, 2).setValue(value);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      sheet.appendRow([key, value]);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({ success: true }))
+      .setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// ===== 마스터 시트 데이터 로드 =====
+function loadSheetData() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getSheetByGid(ss, SHEET_GID);
+  if (!sheet) {
+    return { error: 'GID ' + SHEET_GID + ' 시트를 찾을 수 없습니다.' };
+  }
+
+  var data = sheet.getDataRange().getValues();
+  if (data.length === 0) {
+    return { error: '시트에 데이터가 없습니다.' };
+  }
+
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var rows = data.slice(1);
+
+  return {
+    headers: headers,
+    rows: rows,
+    sheetName: sheet.getName(),
+    updatedAt: new Date().toISOString(),
+    totalRows: rows.length
+  };
+}
+
+// ===== 클라우드 저장 데이터 로드 (_data 시트) =====
+function loadCloudData() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(DATA_SHEET_NAME);
+  if (!sheet) {
+    return { data: {} };
+  }
+
+  var data = sheet.getDataRange().getValues();
+  var result = {};
+  for (var i = 0; i < data.length; i++) {
+    var key = String(data[i][0] || '').trim();
+    if (key) {
+      result[key] = String(data[i][1] || '');
+    }
+  }
+  return { data: result };
+}
+
+// ===== 유틸리티 =====
+function getSheetByGid(ss, gid) {
+  var sheets = ss.getSheets();
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].getSheetId() === gid) {
+      return sheets[i];
+    }
+  }
+  return null;
+}
+
+function respond(obj, callback) {
+  var json = JSON.stringify(obj);
+  if (callback) {
+    // JSONP 응답
+    return ContentService
+      .createTextOutput(callback + '(' + json + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService
+    .createTextOutput(json)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+```
+
+</details>
 
 ---
 
@@ -438,11 +590,12 @@ function getChannelClass(ch) {
 - [ ] KPI 항목/목표값 변경 (`KPI_MAIN`, `KPI_FREE`)
 - [ ] KPI 시트 행 매핑 변경 (`updateKpi(KPI_MAIN, 행번호)`)
 - [ ] KPI 컬럼 매핑 변경 (`KPI_COL_MAP`)
-- [ ] 새 구글 시트에 Apps Script 배포 → URL 설정
+- [ ] 새 구글 시트에 Apps Script 배포 → URL 설정 (위 코드 복사 → GID 변경 → 배포)
 - [ ] 담당자 이름 변경 (GNB, 목실감, 응원문구)
 - [ ] (필요시) 채널 색상 추가
 - [ ] 브라우저 localStorage 초기화 (이전 프로젝트 데이터 삭제)
 - [ ] 테스트: 시트 업데이트 → 캘린더/필터/KPI/임팩트 동작 확인
+- [ ] 테스트: 책무회의/목실감 저장 → `_data` 시트 탭에 백업되는지 확인
 
 ---
 
@@ -466,7 +619,21 @@ function getChannelClass(ch) {
 
 ---
 
-## 10. 자동화 개선 아이디어 (향후)
+## 10. AI를 활용한 서비스 만들기
+
+EVENTS/TREE_DATA를 수동으로 변환하는 대신, **AI 서비스(Claude, Google AI Studio 등)를 활용**하면 빠르게 새 프로젝트 서비스를 만들 수 있습니다.
+
+👉 **[`HOW_TO_MAKE.md`](HOW_TO_MAKE.md)** 문서를 참고하세요.
+
+이 문서에는 다음 내용이 포함되어 있습니다:
+- AI에게 제공할 **기획문서 템플릿**
+- 데이터 변환을 위한 **단계별 AI 프롬프트**
+- Apps Script **배포 방법**
+- 전체 과정 **체크리스트**
+
+---
+
+## 11. 자동화 개선 아이디어 (향후)
 
 현재는 EVENTS/TREE_DATA를 HTML에 직접 작성해야 하지만, 다음과 같은 개선이 가능합니다:
 
