@@ -1432,6 +1432,32 @@
   .rpt-copy-cancel { background: #ffffff; color: #718096; border: 1px solid #e2e8f0; }
   .rpt-copy-cancel:hover { background: #f8fafc; }
 
+  /* 책무회의 섹션 접기/펼치기 토글 */
+  .rpt-section-label.rpt-collapsible {
+    cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+    user-select: none; padding: 4px 0; transition: color 0.15s;
+  }
+  .rpt-section-label.rpt-collapsible:hover { color: #2b6cb0; }
+  .rpt-toggle-icon {
+    font-size: 10px; transition: transform 0.2s ease; color: #a0aec0; margin-left: 8px; flex-shrink: 0;
+  }
+  .rpt-section.rpt-expanded .rpt-toggle-icon { transform: rotate(90deg); }
+  .rpt-summary {
+    font-size: 11px; color: #718096; padding: 2px 0 2px 4px; line-height: 1.5;
+  }
+  .rpt-summary-count { font-weight: 600; color: #4a5568; }
+  .rpt-summary-done { color: #38a169; }
+  .rpt-summary-wip { color: #dd6b20; }
+  .rpt-summary-empty { color: #a0aec0; font-style: italic; }
+  .rpt-summary-list { margin-top: 2px; font-size: 11px; color: #4a5568; line-height: 1.6; }
+  .rpt-sl-done { color: #38a169; font-weight: 600; }
+  .rpt-sl-wip { color: #a0aec0; }
+  .rpt-detail-wrap {
+    max-height: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.2s ease; opacity: 0;
+  }
+  .rpt-section.rpt-expanded .rpt-detail-wrap { max-height: 2000px; opacity: 1; }
+  .rpt-section.rpt-expanded .rpt-summary { display: none; }
+
   /* Impact Sidebar */
   .impact-sidebar {
     position: fixed;
@@ -2603,27 +2629,54 @@ function buildReportHTML(assignee) {
   </div>`;
 
   // 2. 가중목
+  const noticeText = '자음과모음님 TR신규특강 오픈알림자수 1500명 본공지 전일 자정까지 모집하고, 구매전환율 30% / 3월 14일까지 결제 450명을 만든다.';
+  const noticeSummary = noticeText.substring(0, 30) + '...';
   html += `<div class="rpt-section">
-    <div class="rpt-section-label">ㅇ 03월 가중목 본공지</div>
-    <div class="rpt-content rpt-fixed">자음과모음님 TR신규특강 오픈알림자수 1500명 본공지 전일 자정까지 모집하고, 구매전환율 30% / 3월 14일까지 결제 450명을 만든다.</div>
+    <div class="rpt-section-label rpt-collapsible" onclick="toggleReportSection(this)"><span>ㅇ 03월 가중목 본공지</span><span class="rpt-toggle-icon">▶</span></div>
+    <div class="rpt-summary">${noticeSummary}</div>
+    <div class="rpt-detail-wrap"><div class="rpt-content rpt-fixed">${noticeText}</div></div>
   </div>`;
 
   // 3. 선행지표
+  let kpiSummaryParts = [];
+  kpiData.forEach(k => { kpiSummaryParts.push(k.label + ' ' + k.fmt(k.actual) + '/' + k.fmt(k.target)); });
+  const kpiSummary = kpiSummaryParts.join(' | ');
   html += `<div class="rpt-section">
-    <div class="rpt-section-label">ㅇ 이번주 나의 선행지표는? (${kpiLabel})</div>`;
-  html += `<div class="rpt-kpi-line">`;
+    <div class="rpt-section-label rpt-collapsible" onclick="toggleReportSection(this)"><span>ㅇ 이번주 나의 선행지표는? (${kpiLabel})</span><span class="rpt-toggle-icon">▶</span></div>
+    <div class="rpt-summary">${kpiSummary}</div>
+    <div class="rpt-detail-wrap"><div class="rpt-kpi-line">`;
   kpiData.forEach((k,i) => {
     const gap = k.target - k.actual;
     html += `${i>0?' | ':''}${k.label}: <span class="rpt-kpi-val">${k.fmt(k.target)}</span>/${k.fmt(k.actual)}`;
     if (gap > 0) html += ` <span class="rpt-kpi-gap">(gap ${k.fmt(gap)})</span>`;
   });
-  html += `</div></div>`;
+  html += `</div></div></div>`;
 
   // 4. 어제 진행한 공약
   const yesterdayItems = SHEET_DATA.filter(s => s.startDate && s.endDate && yesterdayStr >= s.startDate && yesterdayStr <= s.endDate && s.assignee === who);
+  const yDone = yesterdayItems.filter(i => i.done === true).length;
+  const yWip = yesterdayItems.length - yDone;
+  let ySummary = '';
+  if (yesterdayItems.length === 0) {
+    ySummary = '<span class="rpt-summary-empty">공약 없음</span>';
+  } else {
+    ySummary = '<span class="rpt-summary-count">' + yesterdayItems.length + '건</span>';
+    const yParts = [];
+    if (yDone > 0) yParts.push('<span class="rpt-summary-done">완료 ' + yDone + '</span>');
+    if (yWip > 0) yParts.push('<span class="rpt-summary-wip">진행중 ' + yWip + '</span>');
+    if (yParts.length > 0) ySummary += ' (' + yParts.join(', ') + ')';
+    ySummary += '<div class="rpt-summary-list">' + yesterdayItems.map(i => {
+      const st = i.done === true ? '<span class="rpt-sl-done">V</span>' : '<span class="rpt-sl-wip">·</span>';
+      const tagM = i.detail.match(/^(\[.*?\])\s*/);
+      const tag = tagM ? tagM[1] + ' ' : '';
+      const rest = tagM ? i.detail.substring(tagM[0].length) : i.detail;
+      return st + ' ' + tag + rest.substring(0, 25);
+    }).join('<br>') + '</div>';
+  }
   html += `<div class="rpt-section rpt-editable-section" data-section="yesterday">
-    <div class="rpt-section-label">ㅇ 어제 진행한 공약</div>
-    <div class="rpt-section-body">`;
+    <div class="rpt-section-label rpt-collapsible" onclick="toggleReportSection(this)"><span>ㅇ 어제 진행한 공약</span><span class="rpt-toggle-icon">▶</span></div>
+    <div class="rpt-summary">${ySummary}</div>
+    <div class="rpt-detail-wrap"><div class="rpt-section-body">`;
   if (yesterdayItems.length === 0) {
     html += `<div class="rpt-content" style="color:#a0aec0;">(어제 진행한 공약 없음)</div>`;
   } else {
@@ -2642,13 +2695,26 @@ function buildReportHTML(assignee) {
       if (!actualVal && !reviewVal) html += `<div class="rpt-task-review" style="color:#a0aec0;">↳ 실적/복기 미입력</div>`;
     });
   }
-  html += `</div></div>`;
+  html += `</div></div></div>`;
 
   // 5. 오늘 진행할 공약
   const todayItems = SHEET_DATA.filter(s => s.startDate && s.endDate && today >= s.startDate && today <= s.endDate && s.assignee === who);
+  let tSummary = '';
+  if (todayItems.length === 0) {
+    tSummary = '<span class="rpt-summary-empty">공약 없음</span>';
+  } else {
+    tSummary = '<span class="rpt-summary-count">' + todayItems.length + '건</span>';
+    tSummary += '<div class="rpt-summary-list">' + todayItems.map(i => {
+      const tagM = i.detail.match(/^(\[.*?\])\s*/);
+      const tag = tagM ? tagM[1] + ' ' : '';
+      const rest = tagM ? i.detail.substring(tagM[0].length) : i.detail;
+      return '<span class="rpt-sl-wip">·</span> ' + tag + rest.substring(0, 25);
+    }).join('<br>') + '</div>';
+  }
   html += `<div class="rpt-section rpt-editable-section" data-section="today">
-    <div class="rpt-section-label">ㅇ 오늘 진행할 공약</div>
-    <div class="rpt-section-body">`;
+    <div class="rpt-section-label rpt-collapsible" onclick="toggleReportSection(this)"><span>ㅇ 오늘 진행할 공약</span><span class="rpt-toggle-icon">▶</span></div>
+    <div class="rpt-summary">${tSummary}</div>
+    <div class="rpt-detail-wrap"><div class="rpt-section-body">`;
   if (todayItems.length === 0) {
     html += `<div class="rpt-content" style="color:#a0aec0;">(오늘 진행할 공약 없음)</div>`;
   } else {
@@ -2661,16 +2727,18 @@ function buildReportHTML(assignee) {
       html += `<div class="rpt-task"><span class="rpt-task-date">[${item.date||''}]</span> ${item.detail}</div>`;
     });
   }
-  html += `</div></div>`;
+  html += `</div></div></div>`;
 
   // 6. 고민 + 그외
-  html += `<div class="rpt-section">
-    <div class="rpt-section-label">ㅇ 고민되는 사안</div>
-    <div class="rpt-editable-area" contenteditable="true">(직접 작성)</div>
+  html += `<div class="rpt-section" data-section="concern">
+    <div class="rpt-section-label rpt-collapsible" onclick="toggleReportSection(this)"><span>ㅇ 고민되는 사안</span><span class="rpt-toggle-icon">▶</span></div>
+    <div class="rpt-summary"><span class="rpt-summary-empty">미작성</span></div>
+    <div class="rpt-detail-wrap"><div class="rpt-editable-area" contenteditable="true">(직접 작성)</div></div>
   </div>`;
-  html += `<div class="rpt-section">
-    <div class="rpt-section-label">ㅇ 그외</div>
-    <div class="rpt-editable-area" contenteditable="true">(직접 작성)</div>
+  html += `<div class="rpt-section" data-section="etc">
+    <div class="rpt-section-label rpt-collapsible" onclick="toggleReportSection(this)"><span>ㅇ 그외</span><span class="rpt-toggle-icon">▶</span></div>
+    <div class="rpt-summary"><span class="rpt-summary-empty">미작성</span></div>
+    <div class="rpt-detail-wrap"><div class="rpt-editable-area" contenteditable="true">(직접 작성)</div></div>
   </div>`;
 
   return { html, todayLabel };
@@ -2775,7 +2843,10 @@ function getReportPlainText() {
   let text = '';
   body.querySelectorAll('.rpt-section').forEach(sec => {
     const label = sec.querySelector('.rpt-section-label');
-    if (label) text += label.textContent + '\n';
+    if (label) {
+      const icon = label.querySelector('.rpt-toggle-icon');
+      text += (icon ? label.textContent.replace(icon.textContent, '').trim() : label.textContent) + '\n';
+    }
     sec.querySelectorAll('.rpt-content, .rpt-fixed, .rpt-kpi-line, .rpt-task-parent, .rpt-task, .rpt-task-review, .rpt-editable-area').forEach(el => {
       text += el.textContent + '\n';
     });
@@ -2908,6 +2979,67 @@ function openReportSidebar(assignee) {
   document.body.classList.add('report-open');
   renderReportHistory();
   initEditableSections();
+}
+
+function toggleReportSection(labelEl) {
+  var section = labelEl.closest('.rpt-section');
+  if (section.classList.contains('rpt-expanded')) {
+    var ta = section.querySelector('.rpt-edit-textarea');
+    if (ta) ta.blur();
+  }
+  section.classList.toggle('rpt-expanded');
+  if (!section.classList.contains('rpt-expanded')) {
+    updateSectionSummary(section);
+  }
+}
+
+function updateSectionSummary(section) {
+  var summary = section.querySelector('.rpt-summary');
+  if (!summary) return;
+  var editArea = section.querySelector('.rpt-detail-wrap .rpt-editable-area');
+  if (editArea) {
+    var text = editArea.textContent.trim();
+    if (!text || text === '(직접 작성)') {
+      summary.innerHTML = '<span class="rpt-summary-empty">미작성</span>';
+    } else {
+      summary.textContent = text.substring(0, 40) + (text.length > 40 ? '...' : '');
+    }
+    return;
+  }
+  var sectionBody = section.querySelector('.rpt-section-body');
+  if (sectionBody && section.classList.contains('rpt-editable-section')) {
+    var tasks = sectionBody.querySelectorAll('.rpt-task');
+    var doneEls = sectionBody.querySelectorAll('.rpt-task-status.done');
+    var total = tasks.length;
+    if (total === 0) {
+      summary.innerHTML = '<span class="rpt-summary-empty">공약 없음</span>';
+    } else {
+      var doneCount = doneEls.length;
+      var wip = total - doneCount;
+      var s = '<span class="rpt-summary-count">' + total + '건</span>';
+      var parts = [];
+      if (doneCount > 0) parts.push('<span class="rpt-summary-done">완료 ' + doneCount + '</span>');
+      if (wip > 0) parts.push('<span class="rpt-summary-wip">진행중 ' + wip + '</span>');
+      if (parts.length > 0) s += ' (' + parts.join(', ') + ')';
+      var listItems = [];
+      tasks.forEach(function(t) {
+        var isDone = t.querySelector('.rpt-task-status.done');
+        var name = '';
+        t.childNodes.forEach(function(n) { if (n.nodeType === 3) name += n.textContent; });
+        name = name.trim();
+        var tagM = name.match(/^(\[.*?\])\s*/);
+        var tag = tagM ? tagM[1] + ' ' : '';
+        var rest = tagM ? name.substring(tagM[0].length) : name;
+        name = tag + rest.substring(0, 25);
+        if (name) {
+          var st = isDone ? '<span class="rpt-sl-done">V</span>' : '<span class="rpt-sl-wip">·</span>';
+          listItems.push(st + ' ' + name);
+        }
+      });
+      if (listItems.length > 0) s += '<div class="rpt-summary-list">' + listItems.join('<br>') + '</div>';
+      summary.innerHTML = s;
+    }
+  }
 }
 
 function closeReportSidebar() {
@@ -3854,9 +3986,9 @@ function applySheetData(data) {
   TREE_DATA.forEach(syncTreeNode);
 
   // KPI 실적 업데이트
-  // KPI_MAIN (선행지표1, row 6): 유입←col17, 오픈알림자수←col18, 오픈알림전환율←col19, 구매전환율←col21, 구매←col20
-  // KPI_FREE (선행지표2, row 51): 동일 컬럼 구조
-  var KPI_COL_MAP = [17, 18, 19, 21, 20]; // KPI 순서대로 매핑된 시트 컬럼
+  // KPI_MAIN (선행지표1, row 6): 유입←col17(R), 오픈알림자수←col19(T), 오픈알림전환율←col20(U), 구매전환율←col22(W), 구매(결제)←col21(V)
+  // KPI_FREE (선행지표2, row 51): 미입력 상태 — 데이터 입력 후 매핑 확인 필요
+  var KPI_COL_MAP = [17, 19, 20, 22, 21]; // KPI 순서대로 매핑된 시트 컬럼
   function updateKpi(kpiArr, sheetRow) {
     var ri = sheetRow - 2;
     if (ri < 0 || ri >= rows.length) return;
@@ -4410,6 +4542,8 @@ function initEditableSections() {
         } else {
           body.innerHTML = edited.split('\n').map(l => `<div class="rpt-task">${l}</div>`).join('');
         }
+        const section = body.closest('.rpt-section');
+        if (section) updateSectionSummary(section);
       });
     });
   });
