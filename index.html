@@ -3736,7 +3736,8 @@ var CLOUD_SYNC_KEYS = [
   '목실감_제나_history',
   'kpi_daily_snapshots',
   'impact_log',
-  'sheet_update_history'
+  'sheet_update_history',
+  'cached_sheet_data'
 ];
 
 // 페이지 로드 시 클라우드 데이터를 localStorage로 복원
@@ -3845,7 +3846,7 @@ function updateFromSheet() {
   document.head.appendChild(script);
 }
 
-function applySheetData(data) {
+function applySheetData(data, isRestore) {
   var btn = document.getElementById('btnSheetUpdate');
   var rows = data.rows; // 2차원 배열 (row1=헤더 → rows[0], row2→rows[0] in data)
 
@@ -4022,14 +4023,23 @@ function applySheetData(data) {
   var now = new Date();
   var timeStr = String(now.getMonth()+1).padStart(2,'0') + '/' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
 
-  // 업데이트 히스토리 저장
-  saveSheetUpdateHistory(now, data.totalRows || rows.length);
+  if (!isRestore) {
+    // 시트 원본 데이터를 localStorage + 클라우드에 캐시 (재접속 시 복원용)
+    try {
+      var cachePayload = JSON.stringify({ rows: data.rows, headers: data.headers, totalRows: data.totalRows || rows.length, cachedAt: now.toISOString() });
+      localStorage.setItem('cached_sheet_data', cachePayload);
+      saveToCloud('cached_sheet_data', cachePayload);
+    } catch(e) { console.warn('[시트 캐시 저장 실패]', e); }
 
-  btn.disabled = false;
-  btn.innerHTML = '✅ ' + timeStr + ' 데이터 반영완료!';
-  setTimeout(function() {
-    btn.innerHTML = '🔄 마스터 시트 업데이트';
-  }, 5000);
+    // 업데이트 히스토리 저장
+    saveSheetUpdateHistory(now, data.totalRows || rows.length);
+
+    btn.disabled = false;
+    btn.innerHTML = '✅ ' + timeStr + ' 데이터 반영완료!';
+    setTimeout(function() {
+      btn.innerHTML = '🔄 마스터 시트 업데이트';
+    }, 5000);
+  }
 }
 
 // ===== 시트 업데이트 히스토리 =====
@@ -4789,7 +4799,22 @@ function renderCheerRolling() {
 })();
 setInterval(renderCheerRolling, 30000);
 
-// Init — 즉시 초기화 실행 (클라우드 로딩은 백그라운드에서 비동기 처리)
+// Init — 캐시된 시트 데이터가 있으면 먼저 복원
+(function restoreCachedSheet() {
+  try {
+    var cached = localStorage.getItem('cached_sheet_data');
+    if (cached) {
+      var data = JSON.parse(cached);
+      if (data && data.rows && data.rows.length > 0) {
+        console.log('[시트 복원] 캐시에서 복원 중... (캐시 시각:', data.cachedAt, ')');
+        applySheetData(data, true);
+        console.log('[시트 복원] 완료');
+      }
+    }
+  } catch(e) { console.warn('[시트 복원 실패]', e); }
+})();
+
+// 즉시 초기화 실행 (클라우드 로딩은 백그라운드에서 비동기 처리)
 saveDailySnapshot();
 initFilters();
 renderKpi();
@@ -4807,6 +4832,17 @@ render();
 
 // 클라우드에서 데이터 복원 (백그라운드, 복원 성공 시 관련 UI 갱신)
 loadFromCloud(function() {
+  // 클라우드에서 시트 캐시가 복원되었으면 applySheetData 재실행
+  try {
+    var cached = localStorage.getItem('cached_sheet_data');
+    if (cached) {
+      var data = JSON.parse(cached);
+      if (data && data.rows && data.rows.length > 0) {
+        console.log('[클라우드 복원] 시트 데이터 재적용');
+        applySheetData(data, true);
+      }
+    }
+  } catch(e) { console.warn('[클라우드 시트 복원 실패]', e); }
   // 클라우드 데이터가 localStorage에 복원된 후 UI 갱신
   renderStatusSummary();
   renderWeeklyPlan();
